@@ -108,30 +108,31 @@ public final class HunspellStemmer implements Stemmer {
   public List<CharSequence> stemAll(CharSequence word) {
     ParamChecks.requireNonNullArg(word, "word");
     final String surface = word.toString();
-    final List<String> analyses = findWord(dictionary.inputForm(surface), false);
+    final List<HunspellAnalysis> analyses = findWord(dictionary.inputForm(surface), false);
     if (analyses.isEmpty()) {
       return List.of(surface);
     }
     final Set<String> converted = new LinkedHashSet<>();
-    for (String analysis : analyses) {
-      converted.add(dictionary.outputForm(analysis));
+    for (HunspellAnalysis analysis : analyses) {
+      converted.add(dictionary.outputForm(analysis.stem()));
     }
     return List.copyOf(converted);
   }
 
   /**
-   * Returns morphological analyses as space-separated Hunspell fields. Each result
+   * Returns typed morphological analyses. Each result
    * describes a complete accepted reading. Entries without an explicit
    * {@code st:} field use the dictionary entry as their stem. Compound components
-   * begin with {@code pa:}; entry and affix fields follow in application order.
-   * Results preserve dictionary field text without output conversion.
+   * are available through {@link HunspellAnalysis#parts()}; entry and affix fields
+   * follow in application order. {@link HunspellAnalysis#toHunspellString()} preserves
+   * the Hunspell field layout, including flags, without output conversion.
    *
    * @param word The input to analyze. Must not be {@code null}.
    * @return An immutable list of distinct analyses, or an empty list for unknown input.
    *     At most {@value #MAX_ANALYSES} analyses are returned.
    * @throws IllegalArgumentException Thrown if {@code word} is {@code null}.
    */
-  List<String> analyze(CharSequence word) {
+  public List<HunspellAnalysis> analyze(CharSequence word) {
     ParamChecks.requireNonNullArg(word, "word");
     return findWord(dictionary.inputForm(word.toString()), true);
   }
@@ -145,7 +146,7 @@ public final class HunspellStemmer implements Stemmer {
    * @param morphological Whether results contain morphological fields.
    * @return Recognized stems or analyses, or an empty list.
    */
-  private List<String> findWord(String input, boolean morphological) {
+  private List<HunspellAnalysis> findWord(String input, boolean morphological) {
     int end = input.length();
     while (end > 0 && input.charAt(end - 1) == '.') {
       end--;
@@ -155,7 +156,7 @@ public final class HunspellStemmer implements Stemmer {
       // could restore its strip string onto nothing and answer a non-empty stem
       return List.of();
     }
-    final List<String> analyses = findStems(input.substring(0, end), 0,
+    final List<HunspellAnalysis> analyses = findStems(input.substring(0, end), 0,
         new int[] {PART_CHECK_BUDGET}, new HashMap<>(), morphological);
     if (analyses.isEmpty() && end < input.length()) {
       return findStems(input.substring(0, end + 1), 0,
@@ -167,7 +168,7 @@ public final class HunspellStemmer implements Stemmer {
   /** Accumulates stems or complete morphology readings for one request. */
   private final class Results {
     private final boolean morphological;
-    private final Set<String> values = new LinkedHashSet<>();
+    private final Set<HunspellAnalysis> values = new LinkedHashSet<>();
     /**
      * Whether a direct or affixed reading reached a forbidden entry, which blocks the
      * compound and break readings of the same input.
@@ -198,8 +199,8 @@ public final class HunspellStemmer implements Stemmer {
      *
      * @param additions The accepted results.
      */
-    private void addAll(List<String> additions) {
-      for (String value : additions) {
+    private void addAll(List<HunspellAnalysis> additions) {
+      for (HunspellAnalysis value : additions) {
         if (values.size() >= MAX_ANALYSES) {
           return;
         }
@@ -215,27 +216,28 @@ public final class HunspellStemmer implements Stemmer {
     private void addCompound(List<CompoundPart> parts) {
       if (!morphological) {
         for (CompoundPart part : parts) {
-          addAll(part.stems());
+          addAll(part.stems().stream()
+              .map(stem -> new HunspellAnalysis(stem, List.of(), List.of())).toList());
         }
         return;
       }
-      List<String> accumulated = List.of("");
+      List<List<HunspellAnalysis>> accumulated = List.of(List.of());
       for (CompoundPart part : parts) {
-        final List<String> next = new ArrayList<>();
-        for (String fields : dictionary.morphologicalAnalyses(part.root(), part.flags(),
+        final List<List<HunspellAnalysis>> next = new ArrayList<>();
+        for (HunspellAnalysis reading : dictionary.morphologicalAnalyses(part.root(), part.flags(),
             part == parts.get(parts.size() - 1), part.affixes().toArray(Affix[]::new))) {
-          for (String prior : accumulated) {
+          for (List<HunspellAnalysis> prior : accumulated) {
             if (next.size() >= MAX_ANALYSES) {
               break;
             }
-            next.add(new StringBuilder(prior).append(prior.isEmpty() ? "" : " ")
-                .append(HunspellDictionary.COMPOUND_PART_FIELD).append(part.surface())
-                .append(fields.isEmpty() ? "" : " ").append(fields).toString());
+            final List<HunspellAnalysis> combined = new ArrayList<>(prior);
+            combined.add(reading.withSurface(part.surface()));
+            next.add(combined);
           }
         }
         accumulated = next;
       }
-      addAll(accumulated);
+      addAll(accumulated.stream().map(HunspellAnalysis::compound).toList());
     }
 
     /**
@@ -246,23 +248,22 @@ public final class HunspellStemmer implements Stemmer {
      * @param rightText The closing text.
      * @param right The closing readings.
      */
-    private void addBroken(String leftText, List<String> left, String rightText, List<String> right) {
+    private void addBroken(String leftText, List<HunspellAnalysis> left,
+        String rightText, List<HunspellAnalysis> right) {
       if (!morphological) {
         addAll(left);
         addAll(right);
         return;
       }
-      for (String first : left) {
-        for (String last : right) {
+      for (HunspellAnalysis first : left) {
+        for (HunspellAnalysis last : right) {
           if (values.size() >= MAX_ANALYSES) {
             return;
           }
-          values.add(new StringBuilder()
-              .append(first.startsWith(HunspellDictionary.COMPOUND_PART_FIELD) ? ""
-                  : HunspellDictionary.COMPOUND_PART_FIELD + leftText + " ").append(first)
-              .append(' ').append(last.startsWith(HunspellDictionary.COMPOUND_PART_FIELD) ? ""
-                  : HunspellDictionary.COMPOUND_PART_FIELD + rightText + " ")
-              .append(last).toString());
+          final List<HunspellAnalysis> parts = new ArrayList<>();
+          parts.addAll(first.parts().isEmpty() ? List.of(first.withSurface(leftText)) : first.parts());
+          parts.addAll(last.parts().isEmpty() ? List.of(last.withSurface(rightText)) : last.parts());
+          values.add(HunspellAnalysis.compound(parts));
         }
       }
     }
@@ -278,12 +279,12 @@ public final class HunspellStemmer implements Stemmer {
    * @param morphological Whether results contain morphological fields.
    * @return Recognized stems, or an empty list.
    */
-  private List<String> findStems(String input, int depth, int[] budget,
-      Map<String, List<String>> cache, boolean morphological) {
+  private List<HunspellAnalysis> findStems(String input, int depth, int[] budget,
+      Map<String, List<HunspellAnalysis>> cache, boolean morphological) {
     if (input.isEmpty() || depth >= MAX_COMPOUND_PARTS || budget[0] <= 0) {
       return List.of();
     }
-    final List<String> cached = cache.get(input);
+    final List<HunspellAnalysis> cached = cache.get(input);
     if (cached != null) {
       return cached;
     }
@@ -325,13 +326,13 @@ public final class HunspellStemmer implements Stemmer {
           } else if (end && !start) {
             analyses.addAll(findStems(input.substring(0, at), depth + 1, budget, cache, morphological));
           } else if (!start) {
-            List<String> left = findStems(input.substring(0, at), depth + 1,
+            List<HunspellAnalysis> left = findStems(input.substring(0, at), depth + 1,
                 budget, cache, morphological);
             if (left.isEmpty() && "-".equals(separator) && dictionary.hyphenMovingRule()) {
               left = hyphenatedFirstPart(input.substring(0, at), morphological);
             }
             if (!left.isEmpty()) {
-              final List<String> right = findStems(input.substring(after), depth + 1,
+              final List<HunspellAnalysis> right = findStems(input.substring(after), depth + 1,
                   budget, cache, morphological);
               if (!right.isEmpty()) {
                 analyses.addBroken(input.substring(0, at), left, input.substring(after), right);
@@ -341,7 +342,7 @@ public final class HunspellStemmer implements Stemmer {
         }
       }
     }
-    final List<String> result = List.copyOf(analyses.values);
+    final List<HunspellAnalysis> result = List.copyOf(analyses.values);
     cache.put(input, result);
     return result;
   }
@@ -355,7 +356,7 @@ public final class HunspellStemmer implements Stemmer {
    * @param morphological Whether results contain morphological fields.
    * @return Recognized stems or analyses, or an empty list.
    */
-  private List<String> hyphenatedFirstPart(String text, boolean morphological) {
+  private List<HunspellAnalysis> hyphenatedFirstPart(String text, boolean morphological) {
     final Results analyses = new Results(morphological);
     final String hyphenated = text + "-";
     final boolean allCaps = HunspellDictionary.caseType(text) == HunspellDictionary.CaseType.ALLCAP;
@@ -516,7 +517,8 @@ public final class HunspellStemmer implements Stemmer {
       if (dictionary.acceptsCase(flags, surface, variant, affixes)) {
         stems.addAll(stems.morphological
             ? dictionary.morphologicalAnalyses(root, flags, false, affixes)
-            : dictionary.morphologicalStems(root, flags, affixes));
+            : dictionary.morphologicalStems(root, flags, affixes).stream()
+                .map(stem -> new HunspellAnalysis(stem, List.of(), List.of())).toList());
       }
     }
 

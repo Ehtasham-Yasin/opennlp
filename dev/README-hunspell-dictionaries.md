@@ -183,10 +183,14 @@ material, and `ds:` makes the form derived by the entry's suffixes the stem.
 metadata have no effect on stemming or analysis in the pinned reference and
 are ignored. The active compound and affix directives remain applicable.
 
-`HunspellStemmer.analyze` is package-private in 3.0. It returns each analysis as
-Hunspell fields separated by spaces, in the order Hunspell prints them, and
-`HunspellCompletionTest` compares that output with results recorded from Hunspell.
-The public API returns stems. The shared `Stemmer` interface is unchanged.
+`HunspellStemmer.analyze(CharSequence)` returns immutable `HunspellAnalysis` readings.
+Each reading exposes its stem, ordered compound parts, and entry and affix fields.
+`fieldValues(tag)` looks up all values for a tag without its colon. Untagged prefix
+text and custom raw fields have an empty tag. Flag fields (`fl:`) are omitted from
+`fields()` but retained internally: `toHunspellString()` preserves the previous
+Hunspell field layout exactly, including flags and compound surface spellings.
+`HunspellCompletionTest` compares that text with results recorded from Hunspell.
+The shared `Stemmer` interface is unchanged.
 
 Comments and unused metadata may contain legacy-encoded bytes even when the file uses UTF-8. Parsed rules and dictionary text are decoded strictly. Default and `long` flag modes preserve raw one-byte flag values used by published UTF-8 dictionaries. Invalid rule counts, aliases, flags, and compound limits fail during loading in both modes. Each affix or dictionary stream is rejected when it exceeds `HunspellDictionary.MAX_STREAM_BYTES` (64 MiB).
 

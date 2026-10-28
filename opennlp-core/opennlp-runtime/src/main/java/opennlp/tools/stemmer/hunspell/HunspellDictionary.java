@@ -1726,11 +1726,11 @@ public final class HunspellDictionary {
    * @param flags The selected homonym flags.
    * @param compoundEnd Whether the reading closes a compound.
    * @param affixes The applied rules in order.
-   * @return The complete field strings, possibly empty strings.
+   * @return The complete readings, possibly with empty field lists.
    */
-  List<String> morphologicalAnalyses(String root, int[] flags, boolean compoundEnd,
+  List<HunspellAnalysis> morphologicalAnalyses(String root, int[] flags, boolean compoundEnd,
       Affix... affixes) {
-    final List<String> result = new ArrayList<>();
+    final List<HunspellAnalysis> result = new ArrayList<>();
     boolean hasSuffix = false;
     Affix prefixOnly = null;
     for (Affix affix : affixes) {
@@ -1740,16 +1740,16 @@ public final class HunspellDictionary {
       if (!Arrays.equals(entryFlags, flags)) {
         continue;
       }
-      final List<String> fields = new ArrayList<>();
+      final List<HunspellField> fields = new ArrayList<>();
       for (int i = affixes.length - 1; i >= 0; i--) {
         final Affix prefix = affixes[i];
         if (prefix.suffix()) {
           continue;
         }
         if (hasSuffix || !prefix.morphology().isEmpty()) {
-          fields.addAll(prefix.analysisFields());
+          fields.addAll(prefix.analysisFields().stream().map(HunspellField::parse).toList());
         } else {
-          fields.add(prefix.affix());
+          fields.add(new HunspellField("", prefix.affix()));
         }
         if (!hasSuffix) {
           prefixOnly = prefix;
@@ -1757,22 +1757,22 @@ public final class HunspellDictionary {
       }
       final List<String> entry = morphology.getOrDefault(entryFlags, List.of());
       if (compoundEnd && affixes.length == 0 && entry.isEmpty()) {
-        result.add("");
+        result.add(HunspellAnalysis.fromFields(root, List.of()));
         continue;
       }
       if (!hasField(entry, STEM_FIELD)) {
-        fields.add(STEM_FIELD + root);
+        fields.add(new HunspellField("st", root));
       }
-      fields.addAll(entry);
+      fields.addAll(entry.stream().map(HunspellField::parse).toList());
       if (entry.isEmpty() && prefixOnly != null) {
-        fields.add(FLAG_FIELD + prefixOnly.flagText());
+        fields.add(new HunspellField("fl", prefixOnly.flagText()));
       }
       for (Affix affix : affixes) {
         if (affix.suffix()) {
-          fields.addAll(affix.analysisFields());
+          fields.addAll(affix.analysisFields().stream().map(HunspellField::parse).toList());
         }
       }
-      result.add(String.join(" ", fields));
+      result.add(HunspellAnalysis.fromFields(root, fields));
     }
     return result;
   }

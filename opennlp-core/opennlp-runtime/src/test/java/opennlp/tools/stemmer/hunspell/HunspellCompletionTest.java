@@ -222,7 +222,7 @@ class HunspellCompletionTest {
   }
 
   /**
-   * Checks the package-private analysis operation, which preserves entry and affix
+   * Checks the public analysis operation, which preserves entry and affix
    * fields and answers an immutable list.
    *
    * @throws Exception Thrown if loading or analysis fails.
@@ -235,7 +235,7 @@ class HunspellCompletionTest {
         new ByteArrayInputStream("2\ncard/A po:noun\ncard/A po:verb\n".getBytes(StandardCharsets.UTF_8)));
     final HunspellStemmer stemmer = new HunspellStemmer(dictionary);
     Assertions.assertEquals(List.of("st:card po:noun is:plural", "st:card po:verb is:plural"),
-        stemmer.analyze("cards"));
+        stemmer.analyze("cards").stream().map(HunspellAnalysis::toHunspellString).toList());
     Assertions.assertEquals(List.of(), stemmer.analyze("unlisted"));
     Assertions.assertThrows(IllegalArgumentException.class, () -> stemmer.analyze(null));
     Assertions.assertEquals(List.of(), stemmer.analyze(""));
@@ -286,7 +286,7 @@ class HunspellCompletionTest {
         tasks.add(() -> {
           Assertions.assertEquals(List.of("card"), stemmer.stemAll("cards"));
           Assertions.assertEquals(List.of(), stemmer.analyze("unlisted"));
-          return stemmer.analyze("cards");
+          return stemmer.analyze("cards").stream().map(HunspellAnalysis::toHunspellString).toList();
         });
       }
       for (var result : executor.invokeAll(tasks)) {
@@ -365,7 +365,8 @@ class HunspellCompletionTest {
     final HunspellStemmer stemmer = new HunspellStemmer(HunspellDictionary.load(
         new ByteArrayInputStream(affix.getBytes(StandardCharsets.UTF_8)),
         new ByteArrayInputStream(words.getBytes(StandardCharsets.UTF_8))));
-    Assertions.assertEquals(new TreeSet<>(expected), new TreeSet<>(stemmer.analyze(input)));
+    Assertions.assertEquals(new TreeSet<>(expected),
+        new TreeSet<>(stemmer.analyze(input).stream().map(HunspellAnalysis::toHunspellString).toList()));
   }
 
   /**
@@ -381,7 +382,8 @@ class HunspellCompletionTest {
     final HunspellStemmer allowed = new HunspellStemmer(HunspellDictionary.load(
         new ByteArrayInputStream(affix.getBytes(StandardCharsets.UTF_8)),
         new ByteArrayInputStream("2\nreed/T\nreed/KF\n".getBytes(StandardCharsets.UTF_8))));
-    Assertions.assertEquals(List.of("st:reed"), allowed.analyze("reed"));
+    Assertions.assertEquals(List.of("st:reed"),
+        allowed.analyze("reed").stream().map(HunspellAnalysis::toHunspellString).toList());
     Assertions.assertEquals(List.of(), allowed.analyze("reedreed"));
     final HunspellStemmer forbidden = new HunspellStemmer(HunspellDictionary.load(
         new ByteArrayInputStream(affix.getBytes(StandardCharsets.UTF_8)),
@@ -405,6 +407,7 @@ class HunspellCompletionTest {
     final HunspellStemmer stemmer = new HunspellStemmer(HunspellDictionary.load(
         new ByteArrayInputStream(affix.getBytes(StandardCharsets.UTF_8)),
         new ByteArrayInputStream(words.getBytes(StandardCharsets.UTF_8))));
-    Assertions.assertEquals(List.of(expected), stemmer.analyze(input));
+    Assertions.assertEquals(List.of(expected),
+        stemmer.analyze(input).stream().map(HunspellAnalysis::toHunspellString).toList());
   }
 }
